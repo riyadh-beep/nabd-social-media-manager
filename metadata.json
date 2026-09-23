@@ -1,0 +1,8 @@
+{
+  "name": "Nabd",
+  "description": "Social media workspace for planning, creating, and managing content across stores, creators, businesses, and news channels.",
+  "requestFramePermissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

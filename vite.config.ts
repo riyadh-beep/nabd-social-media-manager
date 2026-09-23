@@ -59,9 +59,13 @@ export default defineConfig(async ({ mode }) => {
       "process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": JSON.stringify(appEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? appEnv.SUPABASE_PUBLISHABLE_KEY ?? ""),
       "process.env.NEXT_PUBLIC_API_BASE_URL": JSON.stringify(apiBaseUrl),
     },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      host: "0.0.0.0",
+      port: 3000,
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       ...(isVercel
