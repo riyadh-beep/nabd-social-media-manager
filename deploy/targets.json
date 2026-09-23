@@ -1,5 +1,10 @@
-YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×~“¢Ö¥¢ëiºÙbë5{
+{
   "railway": {
     "projectId": "035394c6-76f7-4896-8e2a-35c6f321b13f",
     "environmentId": "4c8ff08e-0e36-4424-ada9-679daada386c",
-    "apiServiceß«h‘éì¶»§q«^wˆ˜\SÜšYÚ[ˆˆšÎ‹ËÛ˜X™X\K\›ÙXİ[Û‹\œ˜Z[Ø^K˜\‚ˆKˆ™œ›Û[™ÜšYÚ[ˆˆšÎ‹ËÜÚYÛ˜[\ÚË\š^XYÛÜšÜİ][ÛMM˜Ú]ÜœÚ]H‚ŸB
+    "apiServiceId": "ea6e83d7-d2ec-41f9-9e6e-09a959c9c4be",
+    "workerServiceId": "94c12478-8db1-4d39-9bcc-a96de8e000cb",
+    "apiOrigin": "https://nabd-api-production.up.railway.app"
+  },
+  "frontendOrigin": "https://signaldesk-riyadh.workstation54540.chatgpt.site"
+}

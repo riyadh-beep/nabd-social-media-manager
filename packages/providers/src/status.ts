@@ -1,7 +1,13 @@
-YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛNS¢Ö¥¢ëiºÙbë5import { getEnvironment, type AppEnvironment } from "../../config/src/env.js";
+import { getEnvironment, type AppEnvironment } from "../../config/src/env.js";
 
 export function integrationStatus(environment: AppEnvironment) {
-  ×Nm¢G§²ÚîÆ­yÔ",
+  return {
+    openRouter: environment.openRouter.status,
+    serpApi: environment.serpApi.status,
+    openRouterImages: environment.openRouter.status,
+    buffer: environment.buffer.status,
+    unipile: environment.unipile.status,
+    unipileWebhooks: environment.unipile.webhookSecret ? "configured" : "disabled",
     email: environment.email.status,
   } as const;
 }
