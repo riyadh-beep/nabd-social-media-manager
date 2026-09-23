@@ -144,8 +144,11 @@ export default function Home() {
   );
   const localMode = useSyncExternalStore(
     () => () => {},
-    () => ["localhost", "127.0.0.1"].includes(window.location.hostname),
-    () => false,
+    // Nabd is intentionally a passwordless workspace. The API can still be
+    // protected independently when credentials are configured, but the web
+    // shell should open directly instead of stopping at an owner-login page.
+    () => true,
+    () => true,
   );
   const [section, setSection] = useState<Section>("create"),
     [brands, setBrands] = useState<Brand[]>([]),
