@@ -50,5 +50,6 @@ yarn-error.log*
 # Local runtime logs and secret environment variants
 .*-runtime.log
 .cloudflared.log
+*.log
 .env*
 !.env.example

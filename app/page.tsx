@@ -229,7 +229,7 @@ export default function Home() {
         });
       } catch {
         throw new Error(
-          "Nabd's local service is restarting or unavailable. It will reconnect automatically; use Refresh data if it remains unavailable.",
+          "Cannot reach the workspace API. Your saved data has not been replaced. Check the service connection and try Refresh data.",
         );
       }
       const body = (await r.json().catch(() => ({}))) as Record<
@@ -735,7 +735,16 @@ export default function Home() {
               </button>
             </div>
           )}
-          {!brand && (
+          {!brand && (loading || error) && (
+            <div className="welcome-empty" role="status">
+              <h1>{loading ? t("Loading your workspace…") : t("Workspace connection unavailable")}</h1>
+              <p>{t("Your workspace could not be loaded yet. Retry the connection to see your saved content.")}</p>
+              <button className="primary" disabled={loading} onClick={() => void refresh()}>
+                <RefreshCw size={17} /> {t("Refresh data")}
+              </button>
+            </div>
+          )}
+          {!brand && !loading && !error && (
             <div className="welcome-empty">
               <span className="large-icon">
                 <Sparkles />

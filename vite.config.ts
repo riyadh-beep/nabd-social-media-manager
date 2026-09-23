@@ -37,6 +37,13 @@ const localBindingConfig = {
 export default defineConfig(async ({ mode }) => {
   const appEnv = loadEnv(mode, process.cwd(), "");
   const isVercel = process.env.VERCEL === "1" || process.env.NITRO_PRESET === "vercel";
+  const apiBaseUrl = appEnv.NEXT_PUBLIC_API_BASE_URL?.trim() || "http://127.0.0.1:8787";
+  if (isVercel) {
+    const api = new URL(apiBaseUrl);
+    if (api.protocol !== "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(api.hostname)) {
+      throw new Error("Set NEXT_PUBLIC_API_BASE_URL to the live HTTPS API before deploying Nabd.");
+    }
+  }
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -50,7 +57,7 @@ export default defineConfig(async ({ mode }) => {
     define: {
       "process.env.NEXT_PUBLIC_SUPABASE_URL": JSON.stringify(appEnv.NEXT_PUBLIC_SUPABASE_URL ?? appEnv.SUPABASE_URL ?? ""),
       "process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": JSON.stringify(appEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? appEnv.SUPABASE_PUBLISHABLE_KEY ?? ""),
-      "process.env.NEXT_PUBLIC_API_BASE_URL": JSON.stringify(appEnv.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8787"),
+      "process.env.NEXT_PUBLIC_API_BASE_URL": JSON.stringify(apiBaseUrl),
     },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
