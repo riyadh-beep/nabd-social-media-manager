@@ -1,0 +1,16 @@
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛS¢Ö¥¢ëiºÙbë5# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn×m¢G§²ÚîÆ­yÚ
+*.tsbuildinfo
+.sites-runtime/
+
+# Local runtime logs and secret environment variants
+.*-runtime.log
+.cloudflared.log
+.env*
+!.env.example

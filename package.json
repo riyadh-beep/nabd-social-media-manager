@@ -1,0 +1,15 @@
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíïS¢Ö¥¢ëiºÙbë5{
+  "name": "site-creator-vinext-starter",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {ëm¢G§²ÚîÆ­yÜ
+    "typescript-eslint": "8.59.3",
+    "vinext": "1.0.0-beta.2",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "type": "module"
+}

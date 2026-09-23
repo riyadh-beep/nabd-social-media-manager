@@ -1,7 +1,6 @@
-# Nabd â€” Social Media Manager
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí÷½S¢Ö¥¢ëiºÙbë5# Nabd
 
-Nabd is a local-first social media manager for generating, reviewing, scheduling, publishing, and managing AI-assisted content across social platforms.
+Nabd is a locally developed content workspace for stores, creators, service businesses, and AI/news channels. It creates reviewable content fó½m¢G§²ÚîÆ­yÕild
+```
 
-## Local development
-
-See the project documentation for setup. Runtime secrets stay in `.env` and are never committed.
+See [the integration architecture](docs/INTEGRATION-ARCHITECTURE.md) for durable queue, security, provider, and deployment behavior.
