@@ -1,0 +1,86 @@
+{
+  "name": "OPS - Central Error to Gmail",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Workflow Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-600, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const event = $input.first().json || {};\nconst execution = event.execution || {};\nconst workflow = event.workflow || {};\nconst raw = String(execution.error?.message || execution.error || event.message || 'Unhandled workflow failure');\nconst sanitized = raw\n  .replace(/(authorization|api[-_ ]?key|token|secret|password|cookie)\\s*[:=]\\s*[^,;\\s]+/gi, '$1=[REDACTED]')\n  .replace(/Bearer\\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')\n  .replace(/[\\r\\n\\t]+/g, ' ')\n  .slice(0, 1000);\nconst workflowKey = String(workflow.name || workflow.id || 'unknown-workflow');\nconst executionId = String(execution.id || '');\nconst now = new Date().toISOString();\nreturn [{ json: {\n  run_id: executionId ? workflowKey + ':' + executionId : 'error:' + Date.now(),\n  workflow_key: workflowKey,\n  execution_id: executionId,\n  trigger_type: 'error-workflow',\n  status: 'failed',\n  started_at: execution.startedAt || now,\n  finished_at: now,\n  duration_ms: 0,\n  idempotency_key: '',\n  error_class: String(execution.error?.name || 'UnhandledWorkflowError').slice(0, 120),\n  error_summary: sanitized,\n  payload_excerpt: ''\n} }];"
+      },
+      "id": "normalize-error",
+      "name": "Sanitize and Normalize Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-360, 120],
+      "notesInFlow": true,
+      "notes": "Creates a stable run identifier and strips common secret formats. It intentionally does not persist the failed input or stack trace."
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_runs" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [{ "keyName": "run_id", "condition": "eq", "keyValue": "={{ $json.run_id }}" }] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id": "={{ $json.run_id }}",
+            "workflow_key": "={{ $json.workflow_key }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "trigger_type": "={{ $json.trigger_type }}",
+            "status": "={{ $json.status }}",
+            "started_at": "={{ $json.started_at }}",
+            "finished_at": "={{ $json.finished_at }}",
+            "duration_ms": "={{ $json.duration_ms }}",
+            "idempotency_key": "={{ $json.idempotency_key }}",
+            "error_class": "={{ $json.error_class }}",
+            "error_summary": "={{ $json.error_summary }}",
+            "payload_excerpt": "={{ $json.payload_excerpt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-failure",
+      "name": "Upsert Failure in ops_runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-100, 120]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_ALERT_EMAIL",
+        "subject": "=[n8n failure] {{ $('Sanitize and Normalize Failure').item.json.workflow_key }} / {{ $('Sanitize and Normalize Failure').item.json.run_id }}",
+        "message": "=Workflow: {{ $('Sanitize and Normalize Failure').item.json.workflow_key }}\nRun: {{ $('Sanitize and Normalize Failure').item.json.run_id }}\nExecution: {{ $('Sanitize and Normalize Failure').item.json.execution_id || 'unavailable' }}\nClass: {{ $('Sanitize and Normalize Failure').item.json.error_class }}\nSummary: {{ $('Sanitize and Normalize Failure').item.json.error_summary }}\n\nReview ops_runs and ops_dead_letters. No raw payload or credential data is included.",
+        "options": {}
+      },
+      "id": "send-failure-alert",
+      "name": "Send Failure Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [160, 120],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Bind a Gmail credential and replace the recipient after import. Credential IDs are intentionally omitted."
+    }
+  ],
+  "connections": {
+    "Workflow Error Trigger": { "main": [[{ "node": "Sanitize and Normalize Failure", "type": "main", "index": 0 }]] },
+    "Sanitize and Normalize Failure": { "main": [[{ "node": "Upsert Failure in ops_runs", "type": "main", "index": 0 }]] },
+    "Upsert Failure in ops_runs": { "main": [[{ "node": "Send Failure Alert", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Riyadh" },
+  "active": false,
+  "versionId": "0501ad91-0a76-4f14-9131-1d5d9c80e850",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

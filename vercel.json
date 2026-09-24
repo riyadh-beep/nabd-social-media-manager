@@ -1,1 +1,15 @@
-{"buildCommand":"NITRO_PRESET=vercel vite build","outputDirectory":".output"}
+{
+  "buildCommand": "NITRO_PRESET=vercel vite build",
+  "outputDirectory": ".output",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/worker",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

@@ -1,0 +1,228 @@
+{
+  "name": "OPS - Heartbeat Dead-Letter and Retention Monitor",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] } },
+      "id": "monitor-schedule",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-920, -160]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_heartbeats" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [] },
+        "returnAll": true,
+        "orderBy": false
+      },
+      "id": "get-heartbeats",
+      "name": "Get Heartbeats",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, -280],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nreturn $input.all().flatMap((item) => {\n  const row = item.json || {};\n  if (!row.workflow_key || !row.last_seen_at) return [];\n  const interval = Number(row.expected_interval_minutes || 0);\n  const grace = Number(row.grace_minutes || 0);\n  if (interval <= 0) return [];\n  const lastSeen = Date.parse(row.last_seen_at);\n  const alerted = row.alerted_at ? Date.parse(row.alerted_at) : 0;\n  const deadline = lastSeen + (interval + grace) * 60000;\n  const alreadyAlertedForThisSuccess = alerted >= lastSeen;\n  if (!Number.isFinite(lastSeen) || now <= deadline || alreadyAlertedForThisSuccess) return [];\n  return [{ json: { ...row, status: 'missed', alerted_at: new Date(now).toISOString(), expected_deadline: new Date(deadline).toISOString(), alert_subject: '[n8n missed heartbeat] ' + row.workflow_key + ' / ' + (row.schedule_key || 'default'), alert_message: 'Workflow: ' + row.workflow_key + '\\nSchedule: ' + (row.schedule_key || 'default') + '\\nLast success: ' + row.last_seen_at + '\\nExpected by: ' + new Date(deadline).toISOString() + '\\nThis alert is deduplicated until a newer successful heartbeat is recorded.' } }];\n});"
+      },
+      "id": "prepare-heartbeat-alerts",
+      "name": "Prepare Missed Heartbeat Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, -280]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_ALERT_EMAIL",
+        "subject": "={{ $json.alert_subject }}",
+        "message": "={{ $json.alert_message }}",
+        "options": {}
+      },
+      "id": "send-heartbeat-alert",
+      "name": "Send Missed Heartbeat Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [-140, -280],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_heartbeats" },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            { "keyName": "workflow_key", "condition": "eq", "keyValue": "={{ $('Prepare Missed Heartbeat Alerts').item.json.workflow_key }}" },
+            { "keyName": "schedule_key", "condition": "eq", "keyValue": "={{ $('Prepare Missed Heartbeat Alerts').item.json.schedule_key }}" }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "missed",
+            "alerted_at": "={{ $('Prepare Missed Heartbeat Alerts').item.json.alerted_at }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "mark-heartbeat-alerted",
+      "name": "Mark Heartbeat Alerted",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [120, -280]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_dead_letters" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [{ "keyName": "review_status", "condition": "eq", "keyValue": "pending" }] },
+        "returnAll": true,
+        "orderBy": false
+      },
+      "id": "get-pending-dead-letters",
+      "name": "Get Pending Dead Letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, -40],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().flatMap((item) => {\n  const row = item.json || {};\n  if (!row.dead_letter_id) return [];\n  const summary = String(row.error_summary || 'No summary').replace(/[\\r\\n\\t]+/g, ' ').slice(0, 800);\n  return [{ json: { ...row, review_status: 'alerted', alert_subject: '[n8n dead letter] ' + row.workflow_key + ' / ' + row.dead_letter_id, alert_message: 'Workflow: ' + row.workflow_key + '\\nRun: ' + row.run_id + '\\nDead letter: ' + row.dead_letter_id + '\\nFailed node: ' + row.failed_node + '\\nAttempts: ' + row.attempts + '\\nSummary: ' + summary + '\\nReview and reconcile before replaying any irreversible action.' } }];\n});"
+      },
+      "id": "prepare-dlq-alerts",
+      "name": "Prepare Dead-Letter Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, -40]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_ALERT_EMAIL",
+        "subject": "={{ $json.alert_subject }}",
+        "message": "={{ $json.alert_message }}",
+        "options": {}
+      },
+      "id": "send-dlq-alert",
+      "name": "Send Dead-Letter Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [-140, -40],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_dead_letters" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [{ "keyName": "dead_letter_id", "condition": "eq", "keyValue": "={{ $('Prepare Dead-Letter Alerts').item.json.dead_letter_id }}" }] },
+        "columns": { "mappingMode": "defineBelow", "value": { "review_status": "alerted" } },
+        "options": {}
+      },
+      "id": "mark-dlq-alerted",
+      "name": "Mark Dead Letter Alerted",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [120, -40]
+    },
+    {
+      "parameters": { "rule": { "interval": [{ "triggerAtHour": 3 }] } },
+      "id": "retention-schedule",
+      "name": "Daily Retention",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-920, 260]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_runs" },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            { "keyName": "status", "condition": "eq", "keyValue": "completed" },
+            { "keyName": "finished_at", "condition": "lt", "keyValue": "={{ new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "delete-old-runs",
+      "name": "Delete Completed Runs Older Than 30 Days",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, 180]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_idempotency" },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            { "keyName": "status", "condition": "eq", "keyValue": "completed" },
+            { "keyName": "expires_at", "condition": "lt", "keyValue": "={{ new Date().toISOString() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "delete-old-idempotency",
+      "name": "Delete Expired Completed Idempotency",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, 300]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_dead_letters" },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            { "keyName": "review_status", "condition": "eq", "keyValue": "resolved" },
+            { "keyName": "reviewed_at", "condition": "lt", "keyValue": "={{ new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "delete-resolved-dlq",
+      "name": "Delete Resolved Dead Letters Older Than 90 Days",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, 420],
+      "notesInFlow": true,
+      "notes": "The status filter intentionally prevents automatic deletion of pending, alerted, or otherwise unresolved dead letters."
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": { "main": [[{ "node": "Get Heartbeats", "type": "main", "index": 0 }, { "node": "Get Pending Dead Letters", "type": "main", "index": 0 }]] },
+    "Get Heartbeats": { "main": [[{ "node": "Prepare Missed Heartbeat Alerts", "type": "main", "index": 0 }]] },
+    "Prepare Missed Heartbeat Alerts": { "main": [[{ "node": "Send Missed Heartbeat Alert", "type": "main", "index": 0 }]] },
+    "Send Missed Heartbeat Alert": { "main": [[{ "node": "Mark Heartbeat Alerted", "type": "main", "index": 0 }]] },
+    "Get Pending Dead Letters": { "main": [[{ "node": "Prepare Dead-Letter Alerts", "type": "main", "index": 0 }]] },
+    "Prepare Dead-Letter Alerts": { "main": [[{ "node": "Send Dead-Letter Alert", "type": "main", "index": 0 }]] },
+    "Send Dead-Letter Alert": { "main": [[{ "node": "Mark Dead Letter Alerted", "type": "main", "index": 0 }]] },
+    "Daily Retention": { "main": [[{ "node": "Delete Completed Runs Older Than 30 Days", "type": "main", "index": 0 }, { "node": "Delete Expired Completed Idempotency", "type": "main", "index": 0 }, { "node": "Delete Resolved Dead Letters Older Than 90 Days", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Riyadh" },
+  "active": false,
+  "versionId": "2b0e6eea-0d2c-4096-8a62-a0af9d40dcb6",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

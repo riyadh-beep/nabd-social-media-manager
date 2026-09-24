@@ -1,0 +1,137 @@
+{
+  "name": "OPS - Authenticated Health Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ops-health-dashboard",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dashboard-webhook",
+      "name": "Authenticated Health Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-920, 120],
+      "webhookId": "a879a4ca-f845-4f7a-9798-0fb3140e9cff",
+      "notesInFlow": true,
+      "notes": "Bind an n8n Header Auth credential after import. Do not change authentication to None."
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_runs" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [] },
+        "returnAll": false,
+        "limit": 100,
+        "orderBy": true,
+        "orderByColumn": "started_at",
+        "orderByDirection": "DESC"
+      },
+      "id": "get-recent-runs",
+      "name": "Get Recent Runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, -40],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_heartbeats" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [] },
+        "returnAll": true,
+        "orderBy": false
+      },
+      "id": "get-dashboard-heartbeats",
+      "name": "Get Dashboard Heartbeats",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, 120],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "name", "value": "ops_dead_letters" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [] },
+        "returnAll": true,
+        "orderBy": false
+      },
+      "id": "get-dashboard-dlq",
+      "name": "Get Dashboard Dead Letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-660, 280],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": { "mode": "combine", "combineBy": "combineByPosition", "options": {} },
+      "id": "merge-runs-heartbeats",
+      "name": "Wait for Runs and Heartbeats",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [-380, 60]
+    },
+    {
+      "parameters": { "mode": "combine", "combineBy": "combineByPosition", "options": {} },
+      "id": "merge-dashboard-data",
+      "name": "Wait for Dashboard Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [-120, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const clean = (items) => items.map(i => i.json || {}).filter(x => Object.keys(x).length);\nconst runs = clean($items('Get Recent Runs'));\nconst heartbeats = clean($items('Get Dashboard Heartbeats'));\nconst deadLetters = clean($items('Get Dashboard Dead Letters')).filter(x => !['resolved', 'ignored'].includes(String(x.review_status || '').toLowerCase()));\nconst esc = (value) => String(value ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nconst row = (cells) => '<tr>' + cells.map(v => '<td>' + esc(v) + '</td>').join('') + '</tr>';\nconst runRows = runs.slice(0, 50).map(r => row([r.started_at, r.workflow_key, r.run_id, r.status, r.error_summary])).join('') || '<tr><td colspan=\"5\">No run data</td></tr>';\nconst heartbeatRows = heartbeats.map(h => row([h.workflow_key, h.schedule_key, h.last_seen_at, h.status, h.alerted_at])).join('') || '<tr><td colspan=\"5\">No heartbeat data</td></tr>';\nconst dlqRows = deadLetters.slice(0, 100).map(d => row([d.created_at, d.workflow_key, d.dead_letter_id, d.failed_node, d.review_status])).join('') || '<tr><td colspan=\"5\">No unresolved dead letters</td></tr>';\nconst failed = runs.filter(r => String(r.status).toLowerCase() === 'failed').length;\nconst missed = heartbeats.filter(h => String(h.status).toLowerCase() === 'missed').length;\nconst html = `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>n8n Operations Health</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#17202a}h1,h2{margin:.4rem 0 1rem}.cards{display:flex;gap:1rem;flex-wrap:wrap}.card{border:1px solid #ccd1d1;border-radius:10px;padding:1rem;min-width:10rem}.bad{color:#a93226}table{border-collapse:collapse;width:100%;margin:1rem 0 2rem;font-size:.9rem}th,td{border:1px solid #ddd;padding:.45rem;text-align:left;vertical-align:top}th{background:#f4f6f7}</style></head><body><h1>n8n Operations Health</h1><p>Generated ${esc(new Date().toISOString())}. Values are sanitized operational excerpts.</p><div class=\"cards\"><div class=\"card\"><b>Recent runs</b><br>${runs.length}</div><div class=\"card\"><b>Failures</b><br><span class=\"bad\">${failed}</span></div><div class=\"card\"><b>Unresolved dead letters</b><br><span class=\"bad\">${deadLetters.length}</span></div><div class=\"card\"><b>Missed heartbeats</b><br><span class=\"bad\">${missed}</span></div></div><h2>Recent runs</h2><table><thead><tr><th>Started</th><th>Workflow</th><th>Run ID</th><th>Status</th><th>Error summary</th></tr></thead><tbody>${runRows}</tbody></table><h2>Unresolved dead letters</h2><table><thead><tr><th>Created</th><th>Workflow</th><th>ID</th><th>Failed node</th><th>Review</th></tr></thead><tbody>${dlqRows}</tbody></table><h2>Heartbeats</h2><table><thead><tr><th>Workflow</th><th>Schedule</th><th>Last success</th><th>Status</th><th>Alerted</th></tr></thead><tbody>${heartbeatRows}</tbody></table></body></html>`;\nreturn [{ json: { html } }];"
+      },
+      "id": "render-dashboard",
+      "name": "Render Sanitized Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [140, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" },
+              { "name": "Cache-Control", "value": "no-store" },
+              { "name": "X-Content-Type-Options", "value": "nosniff" }
+            ]
+          }
+        }
+      },
+      "id": "respond-dashboard",
+      "name": "Return Health Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [400, 120]
+    }
+  ],
+  "connections": {
+    "Authenticated Health Dashboard": { "main": [[{ "node": "Get Recent Runs", "type": "main", "index": 0 }, { "node": "Get Dashboard Heartbeats", "type": "main", "index": 0 }, { "node": "Get Dashboard Dead Letters", "type": "main", "index": 0 }]] },
+    "Get Recent Runs": { "main": [[{ "node": "Wait for Runs and Heartbeats", "type": "main", "index": 0 }]] },
+    "Get Dashboard Heartbeats": { "main": [[{ "node": "Wait for Runs and Heartbeats", "type": "main", "index": 1 }]] },
+    "Wait for Runs and Heartbeats": { "main": [[{ "node": "Wait for Dashboard Data", "type": "main", "index": 0 }]] },
+    "Get Dashboard Dead Letters": { "main": [[{ "node": "Wait for Dashboard Data", "type": "main", "index": 1 }]] },
+    "Wait for Dashboard Data": { "main": [[{ "node": "Render Sanitized Dashboard", "type": "main", "index": 0 }]] },
+    "Render Sanitized Dashboard": { "main": [[{ "node": "Return Health Dashboard", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Riyadh" },
+  "active": false,
+  "versionId": "72d96910-e627-4acc-8160-36dbb8c06541",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

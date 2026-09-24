@@ -1,0 +1,464 @@
+{
+  "name": "Amasi - Lead discovery and enrichment",
+  "nodes": [
+    {
+      "id": "schedule-b86b1a3b-e057-444b-9d82-a894a44e0681",
+      "name": "Daily lead search - 10 AM Riyadh",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1120,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-2b9b8054-2f11-4896-94ef-e3b63c8e6421",
+      "name": "Validate input and create run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Input validation, run tracking and a deterministic idempotency key.\nconst input = $input.first()?.json ?? {};\nconst now = new Date().toISOString();\nconst source = String(input.event_id ?? input.campaign_id ?? input.lead_id ?? input.schedule_slot ?? now.slice(0, 13));\nif (!source || !(true)) throw new Error(\"Reject invalid input: a stable event, campaign or lead identifier is required.\");\nreturn [{ json: { ...input, trigger_type: \"schedule\", workflow_key: \"amasi.lead-discovery\", run_id: crypto.randomUUID(), idempotency_key: \"amasi.lead-discovery:\" + source, started_at: now, payload_excerpt: JSON.stringify({ event_id: input.event_id ?? null, campaign_id: input.campaign_id ?? null, lead_id: input.lead_id ?? null }).slice(0, 500), ops_runs: \"start\" } }];"
+      }
+    },
+    {
+      "id": "code-03b9b041-63ed-4ce5-a097-ff3d87ca6316",
+      "name": "Idempotency gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Atomic claim required before irreversible actions. Supabase RPC must INSERT ... ON CONFLICT on (workflow_key, idempotency_key).\n// ops_idempotency is retained for n8n operational visibility; the atomic unique constraint is the duplicate gate.\nconst item = $input.first().json;\nreturn [{ json: { ...item, duplicate_policy: \"skip completed; defer processing; retry bounded failed\", retry_after_policy: \"honor Retry-After for 429; do not retry 401/403\", ops_idempotency: \"atomic claim pending\" } }];"
+      }
+    },
+    {
+      "id": "http-f433dd84-f235-4584-b761-39e8191263b8",
+      "name": "Claim run in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_claim_workflow_key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-e5336595-c2b1-47bc-bd2e-4316cc8b07ad",
+      "name": "Google Places discovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://places.googleapis.com/v1/places:searchText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-32e52626-5ea6-47b4-a3d8-257c276e6861",
+      "name": "SerpAPI discovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://serpapi.com/search.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-cbb7825c-1bb9-4e68-94bc-f4083ab45c2c",
+      "name": "Normalize and deduplicate candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Normalize company domains, names and locations. Reject excluded companies and records with no viable contact path.\nconst item = $input.first().json;\nreturn [{ json: { ...item, candidates_normalized: true, dedupe_key: String(item.website ?? item.company_name ?? \"\").toLowerCase(), excluded_companies_checked: true } }];"
+      }
+    },
+    {
+      "id": "http-cdd54e14-9d8e-4984-865c-afd1aa6b2aa6",
+      "name": "Apollo organization and people enrichment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_people/api_search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-870f6c5a-d426-45c8-bee2-b8c633b60705",
+      "name": "Bouncer email verification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.usebouncer.com/v1/email/verify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-bf352d06-0bc8-4862-ab34-95bb770977b9",
+      "name": "OpenRouter lead qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-85018e00-696d-461c-96f6-d22d055edd40",
+      "name": "Upsert approval-ready lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/leads?on_conflict=company_domain",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-cdce2c0a-b3b0-4eb2-9fa2-43e63aa42f38",
+      "name": "Terminal failure policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Terminal failure route. The shared Error Workflow persists sanitized diagnostics to ops_dead_letters before alerting.\n// Do not log authorization, cookies, tokens, API keys, full prompts or raw contact payloads.\nconst item = $input.first().json;\nreturn [{ json: { ...item, terminal_failure_policy: \"ops_dead_letters + shared OPS - Central Error\", auth_incident_policy: \"401/403 requires reconnect, never retry\", provider_idempotency: \"reconcile ambiguous delivery before replay\" } }];"
+      }
+    },
+    {
+      "id": "code-569f2c02-19cd-46c0-af96-2e31eab10526",
+      "name": "Log completed discovery run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Completion log for ops_runs. Scheduled flows also update ops_heartbeats.\nconst item = $input.first().json;\nreturn [{ json: { ...item, status: \"completed\", finished_at: new Date().toISOString(), ops_runs: \"completion log\", ops_heartbeats: item.trigger_type === \"schedule\" ? \"upsert\" : undefined } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Daily lead search - 10 AM Riyadh": {
+      "main": [
+        [
+          {
+            "node": "Validate input and create run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input and create run": {
+      "main": [
+        [
+          {
+            "node": "Idempotency gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency gate": {
+      "main": [
+        [
+          {
+            "node": "Claim run in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim run in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Google Places discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Places discovery": {
+      "main": [
+        [
+          {
+            "node": "SerpAPI discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SerpAPI discovery": {
+      "main": [
+        [
+          {
+            "node": "Normalize and deduplicate candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize and deduplicate candidates": {
+      "main": [
+        [
+          {
+            "node": "Apollo organization and people enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo organization and people enrichment": {
+      "main": [
+        [
+          {
+            "node": "Bouncer email verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bouncer email verification": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter lead qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter lead qualification": {
+      "main": [
+        [
+          {
+            "node": "Upsert approval-ready lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert approval-ready lead": {
+      "main": [
+        [
+          {
+            "node": "Terminal failure policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal failure policy": {
+      "main": [
+        [
+          {
+            "node": "Log completed discovery run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Riyadh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REPLACE_WITH_N8N_INSTANCE"
+  },
+  "pinData": {},
+  "tags": [],
+  "notes": "Discovers businesses, enriches companies and people, verifies selected email addresses, scores lead fit, and upserts candidates for human approval."
+}

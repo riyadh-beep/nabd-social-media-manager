@@ -1,0 +1,359 @@
+{
+  "name": "Amasi - Sales handover and calendar",
+  "nodes": [
+    {
+      "id": "webhook-9b60e5ff-3e40-450b-8f8e-f3354977efd1",
+      "name": "Dashboard meeting and handover command",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amasi/handover",
+        "responseMode": "lastNode",
+        "authentication": "headerAuth",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL",
+          "name": "Amasi Dashboard Webhook Auth"
+        }
+      }
+    },
+    {
+      "id": "code-c0d2be86-1fb6-4734-b574-278f07316059",
+      "name": "Validate handover command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Input validation, run tracking and a deterministic idempotency key.\nconst input = $input.first()?.json ?? {};\nconst now = new Date().toISOString();\nconst source = String(input.event_id ?? input.campaign_id ?? input.lead_id ?? input.schedule_slot ?? now.slice(0, 13));\nif (!source || !(Boolean(input.lead_id))) throw new Error(\"Reject invalid input: a stable event, campaign or lead identifier is required.\");\nreturn [{ json: { ...input, trigger_type: \"webhook\", workflow_key: \"amasi.handover-calendar\", run_id: crypto.randomUUID(), idempotency_key: \"amasi.handover-calendar:\" + source, started_at: now, payload_excerpt: JSON.stringify({ event_id: input.event_id ?? null, campaign_id: input.campaign_id ?? null, lead_id: input.lead_id ?? null }).slice(0, 500), ops_runs: \"start\" } }];"
+      }
+    },
+    {
+      "id": "code-af9cebb0-04eb-467e-8abc-4d4d990a2e11",
+      "name": "Idempotency gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Atomic claim required before irreversible actions. Supabase RPC must INSERT ... ON CONFLICT on (workflow_key, idempotency_key).\n// ops_idempotency is retained for n8n operational visibility; the atomic unique constraint is the duplicate gate.\nconst item = $input.first().json;\nreturn [{ json: { ...item, duplicate_policy: \"skip completed; defer processing; retry bounded failed\", retry_after_policy: \"honor Retry-After for 429; do not retry 401/403\", ops_idempotency: \"atomic claim pending\" } }];"
+      }
+    },
+    {
+      "id": "http-c2f35336-85f6-4358-9f88-dbc58875c189",
+      "name": "Claim handover request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_claim_workflow_key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-b0d1194a-f094-4eaf-8dbe-1b506fcfb547",
+      "name": "Read lead and conversation summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_get_handover_context",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-5db915ff-c6b7-44cc-9186-3f60d255cc50",
+      "name": "Create meeting through Unipile Calendar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.unipile.com:13443/api/v1/calendar/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-3949af82-7442-4502-b5d0-b4c80b0557e3",
+      "name": "Send WhatsApp handover through Unipile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        300,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.unipile.com:13443/api/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-afb026ca-9a25-49f3-919a-d18563ad67c6",
+      "name": "Save handover and meeting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_record_handover",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-7ddc796a-9b73-4ebb-baf3-21b427eb021f",
+      "name": "Terminal failure policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Terminal failure route. The shared Error Workflow persists sanitized diagnostics to ops_dead_letters before alerting.\n// Do not log authorization, cookies, tokens, API keys, full prompts or raw contact payloads.\nconst item = $input.first().json;\nreturn [{ json: { ...item, terminal_failure_policy: \"ops_dead_letters + shared OPS - Central Error\", auth_incident_policy: \"401/403 requires reconnect, never retry\", provider_idempotency: \"reconcile ambiguous delivery before replay\" } }];"
+      }
+    },
+    {
+      "id": "code-82050a73-a2bf-4ae5-8d1a-ccded4660a27",
+      "name": "Log completed handover",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Completion log for ops_runs. Scheduled flows also update ops_heartbeats.\nconst item = $input.first().json;\nreturn [{ json: { ...item, status: \"completed\", finished_at: new Date().toISOString(), ops_runs: \"completion log\", ops_heartbeats: item.trigger_type === \"schedule\" ? \"upsert\" : undefined } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Dashboard meeting and handover command": {
+      "main": [
+        [
+          {
+            "node": "Validate handover command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate handover command": {
+      "main": [
+        [
+          {
+            "node": "Idempotency gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency gate": {
+      "main": [
+        [
+          {
+            "node": "Claim handover request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim handover request": {
+      "main": [
+        [
+          {
+            "node": "Read lead and conversation summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read lead and conversation summary": {
+      "main": [
+        [
+          {
+            "node": "Create meeting through Unipile Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create meeting through Unipile Calendar": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp handover through Unipile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp handover through Unipile": {
+      "main": [
+        [
+          {
+            "node": "Save handover and meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save handover and meeting": {
+      "main": [
+        [
+          {
+            "node": "Terminal failure policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal failure policy": {
+      "main": [
+        [
+          {
+            "node": "Log completed handover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Riyadh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REPLACE_WITH_N8N_INSTANCE"
+  },
+  "pinData": {},
+  "tags": [],
+  "notes": "Creates a sales handover, a calendar event and an internal WhatsApp notification through Unipile. Native Meta and LinkedIn nodes are not used."
+}

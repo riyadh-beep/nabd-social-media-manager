@@ -1242,7 +1242,9 @@ async function start(): Promise<void> {
   process.once("SIGINT", shutdown);
 }
 
-if (process.env.NODE_ENV !== "test")
+// Railway/local development starts a long-lived HTTP listener. On Vercel the
+// same Fastify instance is adapted by api/[...path].ts instead.
+if (process.env.NODE_ENV !== "test" && process.env.VERCEL !== "1")
   start().catch((error) => {
     console.error(
       "API startup failed:",

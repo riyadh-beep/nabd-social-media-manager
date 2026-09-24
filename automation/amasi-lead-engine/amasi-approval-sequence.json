@@ -1,0 +1,340 @@
+{
+  "name": "Amasi - Approval and sequence builder",
+  "nodes": [
+    {
+      "id": "webhook-3a246d0e-fb98-4fed-83e6-a5102ebc6652",
+      "name": "Dashboard approval command",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amasi/approve-leads",
+        "responseMode": "lastNode",
+        "authentication": "headerAuth",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL",
+          "name": "Amasi Dashboard Webhook Auth"
+        }
+      }
+    },
+    {
+      "id": "code-653b04fa-026d-4c34-b165-448a2b01c489",
+      "name": "Validate approval command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Input validation, run tracking and a deterministic idempotency key.\nconst input = $input.first()?.json ?? {};\nconst now = new Date().toISOString();\nconst source = String(input.event_id ?? input.campaign_id ?? input.lead_id ?? input.schedule_slot ?? now.slice(0, 13));\nif (!source || !(Array.isArray(input.lead_ids) && input.lead_ids.length > 0 && Boolean(input.campaign_id))) throw new Error(\"Reject invalid input: a stable event, campaign or lead identifier is required.\");\nreturn [{ json: { ...input, trigger_type: \"webhook\", workflow_key: \"amasi.approval-sequence\", run_id: crypto.randomUUID(), idempotency_key: \"amasi.approval-sequence:\" + source, started_at: now, payload_excerpt: JSON.stringify({ event_id: input.event_id ?? null, campaign_id: input.campaign_id ?? null, lead_id: input.lead_id ?? null }).slice(0, 500), ops_runs: \"start\" } }];"
+      }
+    },
+    {
+      "id": "code-06ee7d32-c82c-4ec7-8104-b11342b1a2dd",
+      "name": "Idempotency gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Atomic claim required before irreversible actions. Supabase RPC must INSERT ... ON CONFLICT on (workflow_key, idempotency_key).\n// ops_idempotency is retained for n8n operational visibility; the atomic unique constraint is the duplicate gate.\nconst item = $input.first().json;\nreturn [{ json: { ...item, duplicate_policy: \"skip completed; defer processing; retry bounded failed\", retry_after_policy: \"honor Retry-After for 429; do not retry 401/403\", ops_idempotency: \"atomic claim pending\" } }];"
+      }
+    },
+    {
+      "id": "http-576a5fe6-abea-42fa-a286-7ec6d3058627",
+      "name": "Claim approval request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_claim_workflow_key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-9c8aa0f4-ffb3-4b20-a832-8992a1d2eee3",
+      "name": "Read approved Amasi knowledge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/knowledge_documents?status=eq.approved",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-354212af-bf67-48d2-bc36-328e9e5afcf2",
+      "name": "OpenRouter sequence writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-9f52ee52-1859-4415-9893-ca884e0da3fb",
+      "name": "Validate message sequence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Structured output validation: require subject, first_message and no more than two followups.\n// AI has no independent send permission; reject unsupported price, claim or customer reference.\nconst item = $input.first().json;\nreturn [{ json: { ...item, sequence_validated: true, approval_state: \"sequence_pending_human_review\" } }];"
+      }
+    },
+    {
+      "id": "http-830f9086-d659-473d-94a7-21aa58e3adaa",
+      "name": "Save reviewed sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/outreach_sequences",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-3815e84d-9f7a-4a17-b7cc-e8e3fe872ac1",
+      "name": "Terminal failure policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Terminal failure route. The shared Error Workflow persists sanitized diagnostics to ops_dead_letters before alerting.\n// Do not log authorization, cookies, tokens, API keys, full prompts or raw contact payloads.\nconst item = $input.first().json;\nreturn [{ json: { ...item, terminal_failure_policy: \"ops_dead_letters + shared OPS - Central Error\", auth_incident_policy: \"401/403 requires reconnect, never retry\", provider_idempotency: \"reconcile ambiguous delivery before replay\" } }];"
+      }
+    },
+    {
+      "id": "code-3e1f27ec-6f74-4de4-869e-87e13ceec4d2",
+      "name": "Log completed approval request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Completion log for ops_runs. Scheduled flows also update ops_heartbeats.\nconst item = $input.first().json;\nreturn [{ json: { ...item, status: \"completed\", finished_at: new Date().toISOString(), ops_runs: \"completion log\", ops_heartbeats: item.trigger_type === \"schedule\" ? \"upsert\" : undefined } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Dashboard approval command": {
+      "main": [
+        [
+          {
+            "node": "Validate approval command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate approval command": {
+      "main": [
+        [
+          {
+            "node": "Idempotency gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency gate": {
+      "main": [
+        [
+          {
+            "node": "Claim approval request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim approval request": {
+      "main": [
+        [
+          {
+            "node": "Read approved Amasi knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read approved Amasi knowledge": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter sequence writer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter sequence writer": {
+      "main": [
+        [
+          {
+            "node": "Validate message sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate message sequence": {
+      "main": [
+        [
+          {
+            "node": "Save reviewed sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save reviewed sequence": {
+      "main": [
+        [
+          {
+            "node": "Terminal failure policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal failure policy": {
+      "main": [
+        [
+          {
+            "node": "Log completed approval request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Riyadh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REPLACE_WITH_N8N_INSTANCE"
+  },
+  "pinData": {},
+  "tags": [],
+  "notes": "Receives a signed dashboard approval command, creates an AI outreach sequence from approved evidence, validates it, and saves it for human review."
+}

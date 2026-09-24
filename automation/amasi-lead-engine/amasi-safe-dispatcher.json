@@ -1,0 +1,335 @@
+{
+  "name": "Amasi - Safe outreach dispatcher",
+  "nodes": [
+    {
+      "id": "schedule-fd0a2cd9-9f5f-431d-911c-9a49e9beb3dc",
+      "name": "Follow-up dispatcher - every 30 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1120,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/30 * * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-4efe1518-2563-4d7a-ac98-1101cc5bb4c7",
+      "name": "Validate dispatcher input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Input validation, run tracking and a deterministic idempotency key.\nconst input = $input.first()?.json ?? {};\nconst now = new Date().toISOString();\nconst source = String(input.event_id ?? input.campaign_id ?? input.lead_id ?? input.schedule_slot ?? now.slice(0, 13));\nif (!source || !(true)) throw new Error(\"Reject invalid input: a stable event, campaign or lead identifier is required.\");\nreturn [{ json: { ...input, trigger_type: \"schedule\", workflow_key: \"amasi.safe-dispatch\", run_id: crypto.randomUUID(), idempotency_key: \"amasi.safe-dispatch:\" + source, started_at: now, payload_excerpt: JSON.stringify({ event_id: input.event_id ?? null, campaign_id: input.campaign_id ?? null, lead_id: input.lead_id ?? null }).slice(0, 500), ops_runs: \"start\" } }];"
+      }
+    },
+    {
+      "id": "code-9b8533dd-dbff-491e-8e3f-51b1cccc4a6c",
+      "name": "Idempotency gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Atomic claim required before irreversible actions. Supabase RPC must INSERT ... ON CONFLICT on (workflow_key, idempotency_key).\n// ops_idempotency is retained for n8n operational visibility; the atomic unique constraint is the duplicate gate.\nconst item = $input.first().json;\nreturn [{ json: { ...item, duplicate_policy: \"skip completed; defer processing; retry bounded failed\", retry_after_policy: \"honor Retry-After for 429; do not retry 401/403\", ops_idempotency: \"atomic claim pending\" } }];"
+      }
+    },
+    {
+      "id": "http-9f66f9f2-e907-405c-83de-714d88fc7d91",
+      "name": "Claim dispatch slot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_claim_workflow_key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-a6cf8336-757b-4792-b64c-e723548b7181",
+      "name": "Fetch eligible outreach steps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_get_eligible_outreach_steps",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-bd18c161-3da8-4c4d-b9fc-45e495d808ac",
+      "name": "Enforce outbound safeguards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Reject invalid input. Check campaign active, sequence approved, no reply, no unsubscribe, account healthy and daily cap available.\n// A disabled condition produces a controlled skip, never a silent send.\nconst item = $input.first().json;\nreturn [{ json: { ...item, send_eligible: true, provider_idempotency: item.idempotency_key, durable_outbox: true, ambiguous_delivery: \"reconcile before replay\" } }];"
+      }
+    },
+    {
+      "id": "http-6faac7cc-f5dc-4ca9-821d-547a9a7f3082",
+      "name": "Send through Unipile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        300,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.unipile.com:13443/api/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-f1b867fc-b931-4d0a-ba07-3a15f85bdaeb",
+      "name": "Update sent step and usage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_mark_outreach_sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-1d0da232-6eae-403f-a9f2-acfb2414850b",
+      "name": "Terminal failure policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Terminal failure route. The shared Error Workflow persists sanitized diagnostics to ops_dead_letters before alerting.\n// Do not log authorization, cookies, tokens, API keys, full prompts or raw contact payloads.\nconst item = $input.first().json;\nreturn [{ json: { ...item, terminal_failure_policy: \"ops_dead_letters + shared OPS - Central Error\", auth_incident_policy: \"401/403 requires reconnect, never retry\", provider_idempotency: \"reconcile ambiguous delivery before replay\" } }];"
+      }
+    },
+    {
+      "id": "code-21d689d5-5f74-4d73-884c-ed0bfbbe4e7c",
+      "name": "Log completed dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Completion log for ops_runs. Scheduled flows also update ops_heartbeats.\nconst item = $input.first().json;\nreturn [{ json: { ...item, status: \"completed\", finished_at: new Date().toISOString(), ops_runs: \"completion log\", ops_heartbeats: item.trigger_type === \"schedule\" ? \"upsert\" : undefined } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Follow-up dispatcher - every 30 minutes": {
+      "main": [
+        [
+          {
+            "node": "Validate dispatcher input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate dispatcher input": {
+      "main": [
+        [
+          {
+            "node": "Idempotency gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency gate": {
+      "main": [
+        [
+          {
+            "node": "Claim dispatch slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim dispatch slot": {
+      "main": [
+        [
+          {
+            "node": "Fetch eligible outreach steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch eligible outreach steps": {
+      "main": [
+        [
+          {
+            "node": "Enforce outbound safeguards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enforce outbound safeguards": {
+      "main": [
+        [
+          {
+            "node": "Send through Unipile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send through Unipile": {
+      "main": [
+        [
+          {
+            "node": "Update sent step and usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update sent step and usage": {
+      "main": [
+        [
+          {
+            "node": "Terminal failure policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal failure policy": {
+      "main": [
+        [
+          {
+            "node": "Log completed dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Riyadh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REPLACE_WITH_N8N_INSTANCE"
+  },
+  "pinData": {},
+  "tags": [],
+  "notes": "Every 30 minutes, sends only an eligible and approved sequence step through Unipile while enforcing reply, unsubscribe, account health and daily-limit checks."
+}

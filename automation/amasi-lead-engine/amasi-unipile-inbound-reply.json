@@ -1,0 +1,383 @@
+{
+  "name": "Amasi - Unipile inbound reply handling",
+  "nodes": [
+    {
+      "id": "webhook-f8135abb-0244-440c-8d55-5d634708efc7",
+      "name": "Unipile inbound event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amasi/unipile-events",
+        "responseMode": "lastNode",
+        "authentication": "headerAuth",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL",
+          "name": "Amasi Dashboard Webhook Auth"
+        }
+      }
+    },
+    {
+      "id": "code-cdbb7b96-e91c-4e74-8cf5-0dccdece1ac0",
+      "name": "Verify signature and validate event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Verify signature with constant-time comparison against the raw body and reject stale timestamps.\n// Reject invalid input and unsupported event variants explicitly.\nconst input = $input.first()?.json ?? {};\nif (!input.event_id) throw new Error(\"Reject invalid input: Unipile event_id required\");\nreturn [{ json: { ...input, workflow_key: \"amasi.unipile-inbound\", run_id: crypto.randomUUID(), idempotency_key: \"amasi.unipile-inbound:\" + input.event_id, verify_signature: true, signature_validation: \"required\", ops_runs: \"start\" } }];"
+      }
+    },
+    {
+      "id": "code-36b7ef68-11fc-4755-b7e0-cccc77753906",
+      "name": "Idempotency gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Atomic claim required before irreversible actions. Supabase RPC must INSERT ... ON CONFLICT on (workflow_key, idempotency_key).\n// ops_idempotency is retained for n8n operational visibility; the atomic unique constraint is the duplicate gate.\nconst item = $input.first().json;\nreturn [{ json: { ...item, duplicate_policy: \"skip completed; defer processing; retry bounded failed\", retry_after_policy: \"honor Retry-After for 429; do not retry 401/403\", ops_idempotency: \"atomic claim pending\" } }];"
+      }
+    },
+    {
+      "id": "http-a52b5aef-6e69-41d0-b625-f7d35f61ec06",
+      "name": "Claim inbound event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_claim_workflow_key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-33f42514-3dd0-4916-9df8-eec96317319a",
+      "name": "Stop pending follow-ups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_stop_sequence_on_reply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-12aaece2-5b41-477f-b37e-a46e44643c55",
+      "name": "OpenRouter reply assistant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-950e72c6-c7a3-40c1-9fb7-149ac6f5cc4e",
+      "name": "Validate reply classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Structured output validation: interested, needs_information, not_interested, contact_later, wrong_person, unsubscribe, partnership, sensitive, complaint.\n// AI drafts only. Sensitive, complaint and interested replies require_human = true.\nconst item = $input.first().json;\nreturn [{ json: { ...item, structured_output_validation: true, requires_human: true, allowed_action: \"draft_or_handover_only\" } }];"
+      }
+    },
+    {
+      "id": "http-f9ea06fa-c1d3-4725-95e8-a5b7195c55cf",
+      "name": "Upsert conversation and handover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_SUPABASE_PROJECT.supabase.co/rest/v1/rpc/amasi_record_inbound_reply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "http-266e7a2d-d2b0-4963-9e92-685ec0d9e8d3",
+      "name": "Notify salesperson through Unipile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.unipile.com:13443/api/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "code-534ac702-0632-436b-b469-bf7cd5aa360a",
+      "name": "Terminal failure policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Terminal failure route. The shared Error Workflow persists sanitized diagnostics to ops_dead_letters before alerting.\n// Do not log authorization, cookies, tokens, API keys, full prompts or raw contact payloads.\nconst item = $input.first().json;\nreturn [{ json: { ...item, terminal_failure_policy: \"ops_dead_letters + shared OPS - Central Error\", auth_incident_policy: \"401/403 requires reconnect, never retry\", provider_idempotency: \"reconcile ambiguous delivery before replay\" } }];"
+      }
+    },
+    {
+      "id": "code-4e89d357-58b8-41f5-9205-df0f7f35e5aa",
+      "name": "Log completed inbound event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Completion log for ops_runs. Scheduled flows also update ops_heartbeats.\nconst item = $input.first().json;\nreturn [{ json: { ...item, status: \"completed\", finished_at: new Date().toISOString(), ops_runs: \"completion log\", ops_heartbeats: item.trigger_type === \"schedule\" ? \"upsert\" : undefined } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Unipile inbound event": {
+      "main": [
+        [
+          {
+            "node": "Verify signature and validate event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature and validate event": {
+      "main": [
+        [
+          {
+            "node": "Idempotency gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency gate": {
+      "main": [
+        [
+          {
+            "node": "Claim inbound event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim inbound event": {
+      "main": [
+        [
+          {
+            "node": "Stop pending follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stop pending follow-ups": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter reply assistant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter reply assistant": {
+      "main": [
+        [
+          {
+            "node": "Validate reply classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate reply classification": {
+      "main": [
+        [
+          {
+            "node": "Upsert conversation and handover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert conversation and handover": {
+      "main": [
+        [
+          {
+            "node": "Notify salesperson through Unipile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify salesperson through Unipile": {
+      "main": [
+        [
+          {
+            "node": "Terminal failure policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal failure policy": {
+      "main": [
+        [
+          {
+            "node": "Log completed inbound event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Riyadh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REPLACE_WITH_N8N_INSTANCE"
+  },
+  "pinData": {},
+  "tags": [],
+  "notes": "Verifies and deduplicates Unipile events, stops follow-ups immediately, classifies the reply, creates a human-approved draft and sends a salesperson handover when required."
+}

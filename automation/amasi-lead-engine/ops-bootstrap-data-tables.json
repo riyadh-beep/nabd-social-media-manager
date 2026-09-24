@@ -1,0 +1,147 @@
+{
+  "name": "OPS - Bootstrap Data Tables",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Run Bootstrap Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-920, 120]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "ops_runs",
+        "columns": {
+          "column": [
+            { "name": "run_id", "type": "string" },
+            { "name": "workflow_key", "type": "string" },
+            { "name": "execution_id", "type": "string" },
+            { "name": "trigger_type", "type": "string" },
+            { "name": "status", "type": "string" },
+            { "name": "started_at", "type": "date" },
+            { "name": "finished_at", "type": "date" },
+            { "name": "duration_ms", "type": "number" },
+            { "name": "idempotency_key", "type": "string" },
+            { "name": "error_class", "type": "string" },
+            { "name": "error_summary", "type": "string" },
+            { "name": "payload_excerpt", "type": "string" }
+          ]
+        },
+        "options": { "createIfNotExists": true }
+      },
+      "id": "create-ops-runs",
+      "name": "Create ops_runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-680, 120]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "ops_idempotency",
+        "columns": {
+          "column": [
+            { "name": "workflow_key", "type": "string" },
+            { "name": "idempotency_key", "type": "string" },
+            { "name": "run_id", "type": "string" },
+            { "name": "status", "type": "string" },
+            { "name": "attempt_count", "type": "number" },
+            { "name": "result_ref", "type": "string" },
+            { "name": "first_seen_at", "type": "date" },
+            { "name": "updated_at", "type": "date" },
+            { "name": "completed_at", "type": "date" },
+            { "name": "expires_at", "type": "date" },
+            { "name": "last_error_class", "type": "string" }
+          ]
+        },
+        "options": { "createIfNotExists": true }
+      },
+      "id": "create-ops-idempotency",
+      "name": "Create ops_idempotency",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-420, 120]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "ops_dead_letters",
+        "columns": {
+          "column": [
+            { "name": "dead_letter_id", "type": "string" },
+            { "name": "workflow_key", "type": "string" },
+            { "name": "run_id", "type": "string" },
+            { "name": "idempotency_key", "type": "string" },
+            { "name": "failed_node", "type": "string" },
+            { "name": "attempts", "type": "number" },
+            { "name": "error_class", "type": "string" },
+            { "name": "error_summary", "type": "string" },
+            { "name": "payload_excerpt", "type": "string" },
+            { "name": "review_status", "type": "string" },
+            { "name": "created_at", "type": "date" },
+            { "name": "reviewed_at", "type": "date" }
+          ]
+        },
+        "options": { "createIfNotExists": true }
+      },
+      "id": "create-ops-dead-letters",
+      "name": "Create ops_dead_letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [-160, 120]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "ops_heartbeats",
+        "columns": {
+          "column": [
+            { "name": "workflow_key", "type": "string" },
+            { "name": "schedule_key", "type": "string" },
+            { "name": "expected_interval_minutes", "type": "number" },
+            { "name": "grace_minutes", "type": "number" },
+            { "name": "last_seen_at", "type": "date" },
+            { "name": "last_run_id", "type": "string" },
+            { "name": "status", "type": "string" },
+            { "name": "alerted_at", "type": "date" }
+          ]
+        },
+        "options": { "createIfNotExists": true }
+      },
+      "id": "create-ops-heartbeats",
+      "name": "Create ops_heartbeats",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [100, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'ready', tables: ['ops_runs', 'ops_idempotency', 'ops_dead_letters', 'ops_heartbeats'], note: 'Table creation is idempotent. Review schemas before changing column types.' } }];"
+      },
+      "id": "bootstrap-result",
+      "name": "Bootstrap Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 120]
+    }
+  ],
+  "connections": {
+    "Run Bootstrap Manually": { "main": [[{ "node": "Create ops_runs", "type": "main", "index": 0 }]] },
+    "Create ops_runs": { "main": [[{ "node": "Create ops_idempotency", "type": "main", "index": 0 }]] },
+    "Create ops_idempotency": { "main": [[{ "node": "Create ops_dead_letters", "type": "main", "index": 0 }]] },
+    "Create ops_dead_letters": { "main": [[{ "node": "Create ops_heartbeats", "type": "main", "index": 0 }]] },
+    "Create ops_heartbeats": { "main": [[{ "node": "Bootstrap Result", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Riyadh" },
+  "active": false,
+  "versionId": "b8aa6850-43dd-48b7-980d-e99f318f18d0",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

@@ -1051,14 +1051,14 @@ async function processJob(
   return { hold: "Unsupported job" };
 }
 
-async function tick(): Promise<void> {
+async function tick(): Promise<boolean> {
   const client = await database.connect();
   try {
     await scheduleReconciliations();
     await client.query("begin");
     const job = await claimJob(client, workerId);
     await client.query("commit");
-    if (!job) return;
+    if (!job) return false;
     try {
       const result = await processJob(job);
       if (typeof (result as { hold?: unknown }).hold === "string")
@@ -1083,6 +1083,7 @@ async function tick(): Promise<void> {
           );
       });
     }
+    return true;
   } catch (error) {
     try {
       await client.query("rollback");
@@ -1093,16 +1094,32 @@ async function tick(): Promise<void> {
       "Worker tick failed:",
       error instanceof Error ? error.message : "unknown error",
     );
+    return false;
   } finally {
     client.release();
   }
+}
+
+export async function drainJobs(options: {
+  maxJobs?: number;
+  maxDurationMs?: number;
+} = {}): Promise<{ processed: number }> {
+  const maxJobs = Math.max(1, Math.min(options.maxJobs ?? 12, 100));
+  const deadline = Date.now() + Math.max(1_000, options.maxDurationMs ?? 240_000);
+  let processed = 0;
+  while (processed < maxJobs && Date.now() < deadline) {
+    const hadJob = await tick();
+    if (!hadJob) break;
+    processed += 1;
+  }
+  return { processed };
 }
 
 async function start(): Promise<void> {
   await databaseReady();
   let stopping = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let active: Promise<void> = Promise.resolve();
+  let active: Promise<unknown> = Promise.resolve();
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
@@ -1131,7 +1148,9 @@ async function start(): Promise<void> {
   console.log(`Nabd worker is running as ${workerId}`);
 }
 
-if (process.env.NODE_ENV !== "test")
+// Vercel invokes drainJobs from a function after API requests and from Cron.
+// Only local/Railway execution uses the continuous polling loop.
+if (process.env.NODE_ENV !== "test" && process.env.VERCEL !== "1")
   start().catch((error) => {
     console.error(
       "Worker startup failed:",

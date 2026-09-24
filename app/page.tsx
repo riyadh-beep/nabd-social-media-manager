@@ -135,8 +135,7 @@ export default function Home() {
         : null;
     }),
     [session, setSession] = useState<Session | null>(null);
-  const [email, setEmail] = useState(""),
-    [password, setPassword] = useState("");
+  const [email, setEmail] = useState("riyadh@mabda.ai");
   const ready = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -144,11 +143,8 @@ export default function Home() {
   );
   const localMode = useSyncExternalStore(
     () => () => {},
-    // Nabd is intentionally a passwordless workspace. The API can still be
-    // protected independently when credentials are configured, but the web
-    // shell should open directly instead of stopping at an owner-login page.
-    () => true,
-    () => true,
+    () => ["localhost", "127.0.0.1"].includes(window.location.hostname),
+    () => false,
   );
   const [section, setSection] = useState<Section>("create"),
     [brands, setBrands] = useState<Brand[]>([]),
@@ -532,17 +528,20 @@ export default function Home() {
           onSubmit={(e) => {
             e.preventDefault();
             void act(async () => {
-              const r = await client!.auth.signInWithPassword({
+              const r = await client!.auth.signInWithOtp({
                 email,
-                password,
+                options: {
+                  shouldCreateUser: false,
+                  emailRedirectTo: window.location.origin,
+                },
               });
               if (r.error) throw r.error;
-            }, "Signed in.");
+            }, "Check your email for the secure sign-in link.");
           }}
         >
           <span className="step-label">{t("OWNER ACCESS")}</span>
           <h2>{t("Welcome back")}</h2>
-          <p>{t("Sign in to your marketing workspace.")}</p>
+          <p>{t("Enter the approved owner email. Nabd will send a secure sign-in link—no password is needed.")}</p>
           <label>
             {t("Email")}
             <input
@@ -553,37 +552,8 @@ export default function Home() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </label>
-          <label>
-            {t("Password")}
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
           <button className="primary" disabled={busy}>
-            {t("Sign in")} <ArrowUpRight size={16} />
-          </button>
-          <button
-            type="button"
-            className="text-button"
-            disabled={busy || !email}
-            onClick={() =>
-              void act(async () => {
-                const r = await client!.auth.signInWithOtp({
-                  email,
-                  options: {
-                    shouldCreateUser: true,
-                    emailRedirectTo: window.location.origin,
-                  },
-                });
-                if (r.error) throw r.error;
-              }, "Check your email for the sign-in link.")
-            }
-          >
-            {t("Email me a sign-in link instead")}
+            {busy ? t("Sending…") : t("Email me a sign-in link")} <ArrowUpRight size={16} />
           </button>
           {error && (
             <p className="error" role="alert">
