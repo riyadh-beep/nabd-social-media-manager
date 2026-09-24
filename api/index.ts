@@ -13,9 +13,14 @@ export default async function handler(
 ): Promise<void> {
   await ready;
 
-  // Vercel mounts this adapter at /api while the application routes are
-  // intentionally defined as /health and /v1/*.
-  request.url = (request.url ?? "/").replace(/^\/api(?=\/|$)/, "") || "/";
+  // vercel.json sends /api/health and /api/v1/* here with the original API
+  // route in the private `path` query parameter.
+  const incoming = new URL(request.url ?? "/api", "https://nabd.invalid");
+  const routedPath = incoming.searchParams.get("path");
+  incoming.searchParams.delete("path");
+  request.url = routedPath
+    ? `/${routedPath}${incoming.search}`
+    : (incoming.pathname.replace(/^\/api(?=\/|$)/, "") || "/") + incoming.search;
 
   await new Promise<void>((resolve, reject) => {
     response.once("finish", resolve);

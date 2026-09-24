@@ -1243,7 +1243,7 @@ async function start(): Promise<void> {
 }
 
 // Railway/local development starts a long-lived HTTP listener. On Vercel the
-// same Fastify instance is adapted by api/[...path].ts instead.
+// same Fastify instance is adapted by api/index.ts instead.
 if (process.env.NODE_ENV !== "test" && process.env.VERCEL !== "1")
   start().catch((error) => {
     console.error(

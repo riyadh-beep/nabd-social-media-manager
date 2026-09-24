@@ -5,7 +5,7 @@ Nabd is deployed as one Vercel project backed by Supabase. Railway is not requir
 ## Runtime layout
 
 - The Vinext web application is the public interface.
-- `api/[...path].ts` adapts the Fastify API to a Vercel Function. Public API paths therefore begin with `/api`, for example `/api/health` and `/api/v1/brands`.
+- `api/index.ts` adapts the Fastify API to a Vercel Function through explicit rewrites. Public API paths therefore begin with `/api`, for example `/api/health` and `/api/v1/brands`.
 - API and webhook requests wake the durable database queue with Vercel `waitUntil`, so inbox replies, generation, and publishing begin without a continuously running worker.
 - `api/cron/worker.ts` drains remaining jobs and schedules reconciliation once per day. Its request must contain the Vercel-managed `CRON_SECRET` bearer token.
 - Supabase continues to provide PostgreSQL, Auth, and private Storage. Deploying does not reset or copy production data.

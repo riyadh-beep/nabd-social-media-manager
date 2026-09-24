@@ -1,6 +1,16 @@
 {
   "buildCommand": "NITRO_PRESET=vercel vite build",
   "outputDirectory": ".output",
+  "rewrites": [
+    {
+      "source": "/api/health",
+      "destination": "/api?path=health"
+    },
+    {
+      "source": "/api/v1/:path*",
+      "destination": "/api?path=v1/:path*"
+    }
+  ],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 300

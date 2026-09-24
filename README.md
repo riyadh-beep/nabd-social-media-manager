@@ -78,7 +78,7 @@ The production API health endpoint is `/api/health`. A healthy response confirms
 
 ## Deployment
 
-The Vercel project builds with the Nitro adapter configured in `vite.config.ts` and `vercel.json`. The catch-all function at `api/[...path].ts` hosts the API and wakes queued jobs after requests. `api/cron/worker.ts` is protected by `CRON_SECRET` and performs daily reconciliation within the Vercel Hobby cron allowance.
+The Vercel project builds with the Nitro adapter configured in `vite.config.ts` and `vercel.json`. The function at `api/index.ts` hosts the API through explicit rewrites and wakes queued jobs after requests. `api/cron/worker.ts` is protected by `CRON_SECRET` and performs daily reconciliation within the Vercel Hobby cron allowance.
 
 Pushes to the connected GitHub `main` branch deploy automatically. Local development still uses the standalone API and worker commands above.
 
